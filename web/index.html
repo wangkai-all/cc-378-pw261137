@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>逐行数据分支合并台</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>逐行数据分支 · 三方合并控制台</h1>
+  <div class="header-actions">
+    <button id="btn-refresh" class="btn">刷新状态</button>
+    <button id="btn-reseed" class="btn btn-warn">重置并播种演示数据</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="main">主线 / 分支</button>
+  <button class="tab" data-tab="merge">合并与冲突裁决</button>
+  <button class="tab" data-tab="subs">订阅与切换点</button>
+  <button class="tab" data-tab="faults">故障注入</button>
+</nav>
+
+<!-- ============================================================== TAB 1 -->
+<section id="tab-main" class="tab-panel active">
+  <div class="grid-2">
+    <div>
+      <h2>主线当前行 <small id="main-head"></small></h2>
+      <div class="form-row">
+        <input id="m-key" placeholder="key">
+        <input id="m-payload" placeholder='payload, 例如 {"v":1}'>
+        <button class="btn" id="m-upsert">写入</button>
+        <button class="btn btn-danger" id="m-delete">删除</button>
+      </div>
+      <table id="main-table" class="data-table">
+        <thead><tr><th>key</th><th>payload</th><th>version</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3>主线事件日志</h3>
+      <div id="main-events" class="event-log"></div>
+    </div>
+
+    <div>
+      <h2>分支</h2>
+      <div class="form-row">
+        <input id="b-name" placeholder="新分支名">
+        <button class="btn" id="b-create">从主线当前基线创建</button>
+      </div>
+      <div id="branch-list"></div>
+      <div id="branch-detail" class="hidden">
+        <h3 id="bd-title"></h3>
+        <p class="hint">基线 seq = <span id="bd-base"></span></p>
+        <div class="form-row">
+          <input id="b-key" placeholder="key">
+          <input id="b-payload" placeholder='payload, 例如 {"v":2}'>
+          <button class="btn" id="b-upsert">分支写入</button>
+          <button class="btn btn-danger" id="b-delete">分支删除</button>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>key</th><th>分支状态</th><th>最后操作 seq</th></tr></thead>
+          <tbody id="branch-rows"></tbody>
+        </table>
+        <h4>分支操作流水</h4>
+        <div id="branch-ops" class="event-log"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== TAB 2 -->
+<section id="tab-merge" class="tab-panel hidden">
+  <div class="toolbar">
+    <select id="merge-branch-select"></select>
+    <label class="mode-toggle">
+      输出方式
+      <select id="merge-mode">
+        <option value="replay">重放分支变更（逐行回放）</option>
+        <option value="snapshot">合并快照（一次性物化最终状态）</option>
+      </select>
+    </label>
+    <button class="btn btn-primary" id="btn-prepare-merge">准备合并（按共同基线识别冲突）</button>
+  </div>
+
+  <div id="merge-workspace" class="hidden">
+    <div class="merge-meta">
+      <span>合并 #<b id="mg-id"></b></span>
+      <span>状态 <b id="mg-status"></b></span>
+      <span>模式 <b id="mg-mode"></b></span>
+      <span>冲突 <b id="mg-conflict-count"></b> 项 ·
+            未裁决 <b id="mg-unresolved-count"></b> 项</span>
+      <button class="btn" id="mg-toggle-mode">切换重放/快照</button>
+      <button class="btn btn-primary" id="mg-commit">提交合并</button>
+      <button class="btn btn-danger" id="mg-abort">撤销此合并</button>
+    </div>
+    <table class="data-table conflict-table">
+      <thead>
+        <tr>
+          <th>key</th>
+          <th>共同基线</th>
+          <th>分支值</th>
+          <th>主线现值</th>
+          <th>判定</th>
+          <th>裁决操作</th>
+        </tr>
+      </thead>
+      <tbody id="merge-plan"></tbody>
+    </table>
+  </div>
+
+  <h3>历史合并</h3>
+  <div id="merge-history" class="event-log"></div>
+</section>
+
+<!-- ============================================================== TAB 3 -->
+<section id="tab-subs" class="tab-panel hidden">
+  <div class="toolbar">
+    <input id="sub-name" placeholder="消费者名称, 例如 warehouse-sync">
+    <button class="btn" id="sub-create">创建订阅（自动回填历史）</button>
+  </div>
+  <div id="sub-list"></div>
+  <div id="sub-live" class="hidden">
+    <h3>实时消费流 — <span id="sub-live-name"></span>
+        <small>last_seq=<span id="sub-last-seq">0</span></small></h3>
+    <div class="consumer-controls">
+      <button class="btn" id="sub-connect">连接 SSE</button>
+      <button class="btn" id="sub-disconnect" disabled>断开（模拟重连）</button>
+      <button class="btn btn-warn" id="sub-replay">手动重放未送达事件</button>
+      <label class="dedupe-toggle">
+        <input type="checkbox" id="sub-dedupe" checked>
+        客户端按 event id 去重（演示幂等）
+      </label>
+    </div>
+    <div id="sub-events" class="event-log consumer-log"></div>
+  </div>
+</section>
+
+<!-- ============================================================== TAB 4 -->
+<section id="tab-faults" class="tab-panel hidden">
+  <h2>故障注入</h2>
+  <p class="hint">两个开关对应两类协调事故，数据均已在 SQLite/outbox 持久化，系统不会丢数据。</p>
+  <div class="fault-card">
+    <h3>① 提交窗口内工作进程崩溃</h3>
+    <p>开启后执行「提交合并」，工作进程在状态切换到 <code>committing</code> 后、应用变更前死亡，
+       事务回滚，合并停在 <code>committing</code>。重启或点「执行恢复」后，合并进程从持久化的
+       裁决计划续做，merge_switch 标记恰好产生一次。</p>
+    <label class="switch"><input type="checkbox" id="f-crash"> 开启 crash_in_committing</label>
+    <button class="btn btn-primary" id="btn-recover">执行恢复（模拟进程重启）</button>
+  </div>
+  <div class="fault-card">
+    <h3>② 提交成功但通知丢失</h3>
+    <p>开启后所有实时 SSE 推送被静默吞掉（模拟网络/通知故障），但 outbox 行保持未送达。
+       消费者重连或手动重放时，从持久化 backlog 补齐，包含 <code>merge_switch</code> 切换标记。</p>
+    <label class="switch">
+      <input type="checkbox" id="f-drop"> 开启 drop_notification_after_commit
+    </label>
+  </div>
+  <div id="fault-status"></div>
+</section>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js"></script>
+</body>
+</html>
